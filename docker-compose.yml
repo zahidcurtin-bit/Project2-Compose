@@ -1,0 +1,50 @@
+# Task 2 : Docker Compose for Jenkins and DinD
+
+services:
+  # DinD Service
+  dind:
+    image: docker:dind
+    container_name: dind
+    privileged: true # privileged mode for safe container operations
+    user: root
+    environment:
+      - DOCKER_TLS_CERTDIR=/certs # enables TLS for secure communication
+    volumes:
+      - dind-certs-ca:/certs/ca # CA certs for server
+      - dind-certs-client:/certs/client # client certs for jenkins
+      - dind-storage:/var/lib/docker # volume for Docker layer cache
+    networks:
+      jenkins:
+        aliases:
+          - docker
+
+  jenkins:
+    image: jenkins/jenkins:lts-jdk11
+    container_name: jenkins
+    user: root
+    restart: unless-stopped
+    ports:
+      - "8080:8080"   
+      - "50000:50000"
+    environment:
+      - DOCKER_HOST=tcp://docker:2376   # uses DinD as remote Docker host
+      - DOCKER_CERT_PATH=/certs/client   
+      - DOCKER_TLS_VERIFY=1
+    volumes:
+      - dind-certs-client:/certs/client:ro
+      - jenkins-data:/var/jenkins_home # volume for Jenkins home
+    networks:
+      - jenkins
+    depends_on:
+      - dind # jenkins uses DinD for pipelines
+
+volumes:
+  dind-certs-ca: # verifies identities
+  dind-certs-client: # jenkins authentication to DinD
+  dind-storage: # cache: docker images and layers for faster builds
+  jenkins-data: # data: jenkins configuration, jobs, and plugins
+  
+
+networks:
+  jenkins:
+    name: jenkins
