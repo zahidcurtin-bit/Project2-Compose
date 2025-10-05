@@ -1,87 +1,249 @@
+# ==============================================================================
+# ISEC6000 Secure DevOps - Assignment 2
+# Student Name: Zahid Hussain Koori Parambil
+# Student ID: 21997112
+# ==============================================================================
+# Docker Compose Configuration for Jenkins CI/CD Pipeline
+# This file sets up a containerized Jenkins environment with Docker-in-Docker
+# for automating Node.js application builds, tests, and deployments
+# ==============================================================================
 
 version: '3.8'
 
 services:
-  # Docker-in-Docker (DinD) service
-  # This container runs a Docker daemon inside itself,
-  # allowing Jenkins to build and run Docker images.
+  # ============================================================================
+  # Docker-in-Docker (DinD) Service
+  # ============================================================================
+  # Purpose: Runs a Docker daemon inside a container, enabling Jenkins to build
+  # and manage Docker images from within its containerized environment.
+  # This mirrors industry-standard CI/CD setups for isolated build processes.
   docker:
     image: docker:dind
     container_name: jenkins-docker
-    privileged: true  # Required for DinD to operate properly
+    
+    # SECURITY CONFIGURATION: Privileged Mode
+    # - Required: DinD needs elevated permissions to run Docker daemon
+    # - Risk: Provides container access to host kernel features
+    # - Mitigation: Run only in controlled, isolated environments
+    # - Industry Practice: Standard for containerized CI/CD workflows
+    privileged: true
+    
     environment:
-      # Enable TLS certificates for secure communication between Jenkins and Docker daemon
+      # SECURITY: TLS Certificate Configuration
+      # - Enables encrypted communication between Jenkins and Docker daemon
+      # - Prevents unauthorized access to Docker API
+      # - Protects against man-in-the-middle attacks
+      # - Certificates stored in /certs directory inside container
       - DOCKER_TLS_CERTDIR=/certs
+    
     volumes:
-      # Store TLS certificates for secure communication
+      # SECURITY VOLUME: TLS Certificates
+      # - Stores client certificates for Jenkins authentication
+      # - Shared with Jenkins container for secure Docker API access
+      # - Implements mutual TLS (mTLS) authentication
       - jenkins-docker-certs:/certs/client
-      # Persist Docker images and layers for caching
+      
+      # PERFORMANCE VOLUME: Docker Layer Cache
+      # - Persists Docker images and layers between restarts
+      # - Speeds up image builds by reusing cached layers
+      # - Prevents disk space exhaustion from temporary build artifacts
+      # - Reduces network bandwidth for repeated image pulls
       - docker-layer-cache:/var/lib/docker
+    
     ports:
-      - "2376:2376"  # Docker daemon port exposed to Jenkins
-    command: --storage-driver=overlay2  # Use overlay2 for better performance
+      # Docker Daemon Port (TLS-secured)
+      # - Port 2376: Standard port for TLS-encrypted Docker API
+      # - Only accessible within the Jenkins network (internal communication)
+      # - Not exposed to public internet for security
+      - "2376:2376"
+    
+    # PERFORMANCE: Storage Driver Configuration
+    # - overlay2: Recommended storage driver for modern Linux kernels
+    # - Provides better performance than older drivers (aufs, devicemapper)
+    # - More stable and efficient for layered filesystems
+    command: --storage-driver=overlay2
+    
+    # RELIABILITY: Restart Policy
+    # - Automatically restarts container if it crashes
+    # - Ensures continuous availability of Docker daemon
+    # - Stops only when manually stopped by administrator
     restart: unless-stopped
+    
+    # NETWORK CONFIGURATION
     networks:
       jenkins:
         aliases:
-          - docker  # Allow Jenkins to reach this service by hostname 'docker'
+          # DNS Alias: Allows Jenkins to connect using hostname 'docker'
+          # Example: DOCKER_HOST=tcp://docker:2376
+          # Simplifies configuration and improves portability
+          - docker
 
-
-  # Jenkins CI/CD server
+  # ============================================================================
+  # Jenkins CI/CD Server
+  # ============================================================================
+  # Purpose: Main Jenkins controller that orchestrates CI/CD pipelines,
+  # manages jobs, stores build artifacts, and executes automated workflows.
   jenkins:
     image: jenkins/jenkins:lts-jdk17
     container_name: jenkins
-    user: root  # Required to install Docker CLI inside Jenkins container
+    
+    # USER CONFIGURATION
+    # - Running as root to allow Docker CLI installation inside container
+    # - Note: In production, use custom Dockerfile with pre-installed Docker
+    #   and run as 'jenkins' user for enhanced security (principle of least privilege)
+    user: root
+    
     ports:
-      - "8080:8080"   # Jenkins web UI
-      - "50000:50000" # Jenkins agent communication port
+      # WEB UI PORT
+      # - Port 8080: Jenkins web interface
+      # - Access URL: http://localhost:8080
+      # - Used for: Dashboard, job configuration, build monitoring, admin settings
+      - "8080:8080"
+      
+      # AGENT COMMUNICATION PORT
+      # - Port 50000: JNLP port for Jenkins agents/slaves
+      # - Used for: Distributed builds across multiple nodes
+      # - Required for: Connecting remote build agents to master controller
+      - "50000:50000"
+    
     volumes:
-      # Persist Jenkins configuration, jobs, plugins, and workspace
+      # PERSISTENCE VOLUME: Jenkins Home Directory
+      # - Stores: Jobs, build history, plugins, credentials, system config
+      # - Critical: All Jenkins data persists across container restarts
+      # - Backup: This volume should be regularly backed up
+      # - Location: /var/jenkins_home inside container
       - jenkins-data:/var/jenkins_home
-      # Mount TLS certificates from DinD (read-only) for secure Docker access
+      
+      # SECURITY VOLUME: TLS Certificates (Read-Only)
+      # - Mounts certificates from DinD service
+      # - Read-only (:ro): Prevents Jenkins from modifying certificates
+      # - Purpose: Enables secure Docker API communication
+      # - Authentication: Mutual TLS with Docker daemon
       - jenkins-docker-certs:/certs/client:ro
+    
     environment:
-      # Connect Jenkins Docker client to DinD service
+      # DOCKER INTEGRATION: Remote Docker Host
+      # - Connects Jenkins to DinD service via TCP
+      # - Uses TLS encryption for secure communication
+      # - 'docker' hostname resolves via network alias
       - DOCKER_HOST=tcp://docker:2376
+      
+      # SECURITY: TLS Certificate Path
+      # - Points to mounted certificates from DinD
+      # - Required for Docker client authentication
+      # - Used by Docker CLI commands in pipeline
       - DOCKER_CERT_PATH=/certs/client
+      
+      # SECURITY: TLS Verification
+      # - Enforces certificate verification for Docker API calls
+      # - Prevents unauthorized access to Docker daemon
+      # - Value '1': Enable TLS verification (recommended)
       - DOCKER_TLS_VERIFY=1
+    
+    # RELIABILITY: Restart Policy
+    # - Automatically restarts on failure
+    # - Ensures Jenkins availability after system reboots
     restart: unless-stopped
+    
+    # NETWORK CONFIGURATION
+    # - Connects to isolated Jenkins network
+    # - Enables communication with DinD service
     networks:
       - jenkins
+    
+    # DEPENDENCY MANAGEMENT
+    # - Ensures Docker service starts before Jenkins
+    # - Prevents connection errors during Jenkins initialization
+    # - Critical: Jenkins requires Docker daemon to be running
     depends_on:
-      - docker  # Ensure Docker service starts before Jenkins
-    entrypoint: >
-      /bin/bash -c "
-      echo '=== Installing Docker CLI in Jenkins ===' &&
-      # Update package lists and install required dependencies
-      apt-get update &&
-      apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release &&
-      # Add Docker GPG key
-      curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg &&
-      # Add Docker repository
-      echo \"deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian bullseye stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null &&
-      # Install Docker CLI
-      apt-get update &&
-      apt-get install -y docker-ce-cli &&
-      echo '=== Docker CLI installation complete ===' &&
-      echo '=== Starting Jenkins ===' &&
-      /usr/local/bin/jenkins.sh
-      "
+      - docker
 
-# Named volumes for persistence
+# ==============================================================================
+# NAMED VOLUMES FOR DATA PERSISTENCE
+# ==============================================================================
+# Purpose: Persist critical data across container lifecycle (stop/start/remove)
+# Storage: Located in /var/lib/docker/volumes/ on host machine
 volumes:
-  # Persist Jenkins home directory (jobs, plugins, configuration)
+  # JENKINS DATA VOLUME
+  # - Content: Jenkins configuration, jobs, plugins, build history, credentials
+  # - Size: Grows with build artifacts and logs
+  # - Backup: Essential for disaster recovery
+  # - Security: Contains sensitive data (credentials, SSH keys)
   jenkins-data:
     driver: local
-  # Store TLS certificates for secure Docker communication
+  
+  # TLS CERTIFICATES VOLUME
+  # - Content: Public/private keys for Docker daemon authentication
+  # - Security: Enables encrypted Jenkins-Docker communication
+  # - Shared: Between DinD (write) and Jenkins (read-only)
+  # - Auto-generated: Created by DinD on first startup
   jenkins-docker-certs:
     driver: local
-  # Persist Docker images and layers to speed up builds
+  
+  # DOCKER CACHE VOLUME
+  # - Content: Docker images, layers, and build cache
+  # - Performance: Significantly speeds up image builds
+  # - Size: Can grow large (monitor disk usage)
+  # - Cleanup: Periodically clean unused images to free space
   docker-layer-cache:
     driver: local
 
-
-# Custom bridge network
+# ==============================================================================
+# CUSTOM BRIDGE NETWORK
+# ==============================================================================
+# Purpose: Isolated network for Jenkins services
+# SECURITY BENEFITS:
+# - Network Isolation: Separates Jenkins from other Docker containers
+# - DNS Resolution: Built-in service discovery (e.g., 'docker' hostname)
+# - Controlled Access: Only Jenkins and DinD can communicate
+# - No Internet Exposure: Internal network not accessible from outside
 networks:
   jenkins:
     driver: bridge
+
+# ==============================================================================
+# SECURITY HARDENING NOTES (To be configured via Jenkins Web UI)
+# ==============================================================================
+# After starting Jenkins with 'docker-compose up -d', perform these steps:
+#
+# 1. INITIAL SETUP:
+#    - Access Jenkins at http://localhost:8080
+#    - Retrieve initial admin password:
+#      docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+#    - Install recommended plugins
+#
+# 2. DISABLE ANONYMOUS ACCESS (Security Requirement #1):
+#    - Navigate to: Manage Jenkins → Security → Configure Global Security
+#    - Under "Authorization", select "Matrix-based security"
+#    - Remove all permissions for "Anonymous" user
+#    - Ensure only authenticated users can access Jenkins
+#    - Click "Save"
+#
+# 3. CREATE NON-ADMIN USER (Security Requirement #2):
+#    - Navigate to: Manage Jenkins → Users → Create User
+#    - Username: pipeline-user 
+#    - Password: pipe123
+#    - Full name: Pipeline User
+#    - Email: pipe@gmail.com
+#    - Click "Create User"
+#
+# 4. CONFIGURE USER PERMISSIONS:
+#    - Navigate to: Manage Jenkins → Security → Configure Global Security
+#    - In "Matrix-based security" table:
+#      * Grant "Overall/Read" to pipeline-user
+#      * Grant "Job/Build", "Job/Read", "Job/Workspace" to pipeline-user
+#      * DO NOT grant "Overall/Administer" (non-admin requirement)
+#    - Click "Save"
+#
+# 5. INSTALL REQUIRED PLUGINS:
+#    - Docker Pipeline plugin
+#    - Git plugin
+#    - Pipeline plugin
+#
+# 6. VERIFY SECURITY SETTINGS:
+#    - Log out of Jenkins
+#    - Verify anonymous users cannot access Jenkins (redirected to login)
+#    - Log in as pipeline-user
+#    - Verify limited permissions (cannot access admin features)
+#
+# ==============================================================================
