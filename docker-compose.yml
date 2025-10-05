@@ -207,6 +207,21 @@ networks:
 # After starting Jenkins with 'docker-compose up -d', perform these steps:
 #
 # 1. INITIAL SETUP:
+#    - Start the services:
+#      docker-compose up -d
+#
+#    - Install Docker CLI inside Jenkins container (Required for pipeline):
+#      docker exec -u root jenkins bash -c "
+#        curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-24.0.7.tgz -o docker.tgz && \
+#        tar -xzf docker.tgz && \
+#        cp docker/docker /usr/local/bin/ && \
+#        rm -rf docker docker.tgz && \
+#        chmod +x /usr/local/bin/docker
+#      "
+#
+#    - Verify Docker installation inside Jenkins:
+#      docker exec jenkins docker --version
+#
 #    - Access Jenkins at http://localhost:8080
 #    - Retrieve initial admin password:
 #      docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
