@@ -1,46 +1,47 @@
+
 version: '3.8'
 
 services:
-  # Docker-in-Docker service - allows Jenkins to build Docker images
+  # Docker-in-Docker (DinD) service
+  # This container runs a Docker daemon inside itself,
+  # allowing Jenkins to build and run Docker images.
   docker:
     image: docker:dind
     container_name: jenkins-docker
-    privileged: true  # Required for DinD to work properly
+    privileged: true  # Required for DinD to operate properly
     environment:
-      # Enable TLS for secure communication between Jenkins and Docker daemon
+      # Enable TLS certificates for secure communication between Jenkins and Docker daemon
       - DOCKER_TLS_CERTDIR=/certs
     volumes:
-      # Store Docker TLS certificates for secure communication
+      # Store TLS certificates for secure communication
       - jenkins-docker-certs:/certs/client
-      # Share Jenkins home directory with DinD for data persistence
-      - jenkins-data:/var/jenkins_home
+      # Persist Docker images and layers for caching
+      - docker-layer-cache:/var/lib/docker
     ports:
-      # Expose Docker daemon port for remote connections
-      - "2376:2376"
+      - "2376:2376"  # Docker daemon port exposed to Jenkins
     command: --storage-driver=overlay2  # Use overlay2 for better performance
     restart: unless-stopped
     networks:
       jenkins:
         aliases:
-          - docker  # Allow Jenkins to connect via hostname 'docker'
+          - docker  # Allow Jenkins to reach this service by hostname 'docker'
+
 
   # Jenkins CI/CD server
   jenkins:
     image: jenkins/jenkins:lts-jdk17
     container_name: jenkins
-    user: root  # Required to install Docker CLI and manage containers
+    user: root  # Required to install Docker CLI inside Jenkins container
     ports:
-      # Jenkins web interface
-      - "8080:8080"
-      # Jenkins agent communication port
-      - "50000:50000"
+      - "8080:8080"   # Jenkins web UI
+      - "50000:50000" # Jenkins agent communication port
     volumes:
-      # Persist Jenkins configuration and job data
+      # Persist Jenkins configuration, jobs, plugins, and workspace
       - jenkins-data:/var/jenkins_home
-      # Mount Docker TLS certificates (read-only) for secure communication
+      # Mount TLS certificates from DinD (read-only) for secure Docker access
       - jenkins-docker-certs:/certs/client:ro
     environment:
-      # Configure Docker client to connect to DinD service
+      # Connect Jenkins Docker client to DinD service
       - DOCKER_HOST=tcp://docker:2376
       - DOCKER_CERT_PATH=/certs/client
       - DOCKER_TLS_VERIFY=1
@@ -49,14 +50,17 @@ services:
       - jenkins
     depends_on:
       - docker  # Ensure Docker service starts before Jenkins
-    # Custom entrypoint to install Docker CLI inside Jenkins container
     entrypoint: >
       /bin/bash -c "
       echo '=== Installing Docker CLI in Jenkins ===' &&
+      # Update package lists and install required dependencies
       apt-get update &&
       apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release &&
+      # Add Docker GPG key
       curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg &&
+      # Add Docker repository
       echo \"deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian bullseye stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null &&
+      # Install Docker CLI
       apt-get update &&
       apt-get install -y docker-ce-cli &&
       echo '=== Docker CLI installation complete ===' &&
@@ -64,16 +68,20 @@ services:
       /usr/local/bin/jenkins.sh
       "
 
-# Named volumes for data persistence
+# Named volumes for persistence
 volumes:
-  # Stores Jenkins configuration, jobs, plugins, and workspace data
+  # Persist Jenkins home directory (jobs, plugins, configuration)
   jenkins-data:
     driver: local
-  # Stores Docker TLS certificates for secure daemon communication
+  # Store TLS certificates for secure Docker communication
   jenkins-docker-certs:
     driver: local
+  # Persist Docker images and layers to speed up builds
+  docker-layer-cache:
+    driver: local
 
-# Custom bridge network for service communication
+
+# Custom bridge network
 networks:
   jenkins:
     driver: bridge
