@@ -1,50 +1,79 @@
-# Task 2 : Docker Compose for Jenkins and DinD
+version: '3.8'
 
 services:
-  # DinD Service
-  dind:
+  # Docker-in-Docker service - allows Jenkins to build Docker images
+  docker:
     image: docker:dind
-    container_name: dind
-    privileged: true # privileged mode for safe container operations
-    user: root
+    container_name: jenkins-docker
+    privileged: true  # Required for DinD to work properly
     environment:
-      - DOCKER_TLS_CERTDIR=/certs # enables TLS for secure communication
+      # Enable TLS for secure communication between Jenkins and Docker daemon
+      - DOCKER_TLS_CERTDIR=/certs
     volumes:
-      - dind-certs-ca:/certs/ca # CA certs for server
-      - dind-certs-client:/certs/client # client certs for jenkins
-      - dind-storage:/var/lib/docker # volume for Docker layer cache
+      # Store Docker TLS certificates for secure communication
+      - jenkins-docker-certs:/certs/client
+      # Share Jenkins home directory with DinD for data persistence
+      - jenkins-data:/var/jenkins_home
+    ports:
+      # Expose Docker daemon port for remote connections
+      - "2376:2376"
+    command: --storage-driver=overlay2  # Use overlay2 for better performance
+    restart: unless-stopped
     networks:
       jenkins:
         aliases:
-          - docker
+          - docker  # Allow Jenkins to connect via hostname 'docker'
 
+  # Jenkins CI/CD server
   jenkins:
-    image: jenkins/jenkins:lts-jdk11
+    image: jenkins/jenkins:lts-jdk17
     container_name: jenkins
-    user: root
-    restart: unless-stopped
+    user: root  # Required to install Docker CLI and manage containers
     ports:
-      - "8080:8080"   
+      # Jenkins web interface
+      - "8080:8080"
+      # Jenkins agent communication port
       - "50000:50000"
-    environment:
-      - DOCKER_HOST=tcp://docker:2376   # uses DinD as remote Docker host
-      - DOCKER_CERT_PATH=/certs/client   
-      - DOCKER_TLS_VERIFY=1
     volumes:
-      - dind-certs-client:/certs/client:ro
-      - jenkins-data:/var/jenkins_home # volume for Jenkins home
+      # Persist Jenkins configuration and job data
+      - jenkins-data:/var/jenkins_home
+      # Mount Docker TLS certificates (read-only) for secure communication
+      - jenkins-docker-certs:/certs/client:ro
+    environment:
+      # Configure Docker client to connect to DinD service
+      - DOCKER_HOST=tcp://docker:2376
+      - DOCKER_CERT_PATH=/certs/client
+      - DOCKER_TLS_VERIFY=1
+    restart: unless-stopped
     networks:
       - jenkins
     depends_on:
-      - dind # jenkins uses DinD for pipelines
+      - docker  # Ensure Docker service starts before Jenkins
+    # Custom entrypoint to install Docker CLI inside Jenkins container
+    entrypoint: >
+      /bin/bash -c "
+      echo '=== Installing Docker CLI in Jenkins ===' &&
+      apt-get update &&
+      apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release &&
+      curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg &&
+      echo \"deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian bullseye stable\" | tee /etc/apt/sources.list.d/docker.list > /dev/null &&
+      apt-get update &&
+      apt-get install -y docker-ce-cli &&
+      echo '=== Docker CLI installation complete ===' &&
+      echo '=== Starting Jenkins ===' &&
+      /usr/local/bin/jenkins.sh
+      "
 
+# Named volumes for data persistence
 volumes:
-  dind-certs-ca: # verifies identities
-  dind-certs-client: # jenkins authentication to DinD
-  dind-storage: # cache: docker images and layers for faster builds
-  jenkins-data: # data: jenkins configuration, jobs, and plugins
-  
+  # Stores Jenkins configuration, jobs, plugins, and workspace data
+  jenkins-data:
+    driver: local
+  # Stores Docker TLS certificates for secure daemon communication
+  jenkins-docker-certs:
+    driver: local
 
+# Custom bridge network for service communication
 networks:
   jenkins:
-    name: jenkins
+    driver: bridge
