@@ -16,7 +16,6 @@ services:
   # ============================================================================
   # Purpose: Runs a Docker daemon inside a container, enabling Jenkins to build
   # and manage Docker images from within its containerized environment.
-  # This mirrors industry-standard CI/CD setups for isolated build processes.
   docker:
     image: docker:dind
     container_name: jenkins-docker
@@ -25,7 +24,6 @@ services:
     # - Required: DinD needs elevated permissions to run Docker daemon
     # - Risk: Provides container access to host kernel features
     # - Mitigation: Run only in controlled, isolated environments
-    # - Industry Practice: Standard for containerized CI/CD workflows
     privileged: true
     
     environment:
@@ -40,7 +38,6 @@ services:
       # SECURITY VOLUME: TLS Certificates
       # - Stores client certificates for Jenkins authentication
       # - Shared with Jenkins container for secure Docker API access
-      # - Implements mutual TLS (mTLS) authentication
       - jenkins-docker-certs:/certs/client
       
       # PERFORMANCE VOLUME: Docker Layer Cache
@@ -59,7 +56,7 @@ services:
     
     # PERFORMANCE: Storage Driver Configuration
     # - overlay2: Recommended storage driver for modern Linux kernels
-    # - Provides better performance than older drivers (aufs, devicemapper)
+    # - Provides better performance than older drivers
     # - More stable and efficient for layered filesystems
     command: --storage-driver=overlay2
     
@@ -74,7 +71,6 @@ services:
       jenkins:
         aliases:
           # DNS Alias: Allows Jenkins to connect using hostname 'docker'
-          # Example: DOCKER_HOST=tcp://docker:2376
           # Simplifies configuration and improves portability
           - docker
 
@@ -89,8 +85,6 @@ services:
     
     # USER CONFIGURATION
     # - Running as root to allow Docker CLI installation inside container
-    # - Note: In production, use custom Dockerfile with pre-installed Docker
-    #   and run as 'jenkins' user for enhanced security (principle of least privilege)
     user: root
     
     ports:
@@ -109,9 +103,6 @@ services:
     volumes:
       # PERSISTENCE VOLUME: Jenkins Home Directory
       # - Stores: Jobs, build history, plugins, credentials, system config
-      # - Critical: All Jenkins data persists across container restarts
-      # - Backup: This volume should be regularly backed up
-      # - Location: /var/jenkins_home inside container
       - jenkins-data:/var/jenkins_home
       
       # SECURITY VOLUME: TLS Certificates (Read-Only)
@@ -137,7 +128,7 @@ services:
       # SECURITY: TLS Verification
       # - Enforces certificate verification for Docker API calls
       # - Prevents unauthorized access to Docker daemon
-      # - Value '1': Enable TLS verification (recommended)
+      # - Value '1': Enable TLS verification 
       - DOCKER_TLS_VERIFY=1
     
     # RELIABILITY: Restart Policy
